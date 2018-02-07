@@ -1,26 +1,30 @@
 {
-  "name": "icinga2-api",
-  "version": "1.1.1",
-  "description": "Nodejs Modul to control Icinga2 through api",
+  "name": "sym-icinga2-api",
+  "version": "2.0.0",
+  "description": "Module for control Icinga2",
   "main": "index.js",
   "scripts": {
     "test": "node index.js"
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/aditosoftware/nodejs-icinga2api.git"
+    "url": "git+https://github.com/vladislavmega/sym-icinga2-api"
   },
   "keywords": [
     "icinga2",
-    "api"
+    "api",
+    "symbotic"
   ],
-  "author": "Adito Software GmbH <info@adito.de> (http://www.adito.de)",
+  "authors": [
+    "vladislavmega@gmail.com (symbotic.com)",
+    "Adito Software GmbH <info@adito.de> (http://www.adito.de)"
+  ],
   "license": "MIT",
   "bugs": {
-    "url": "https://github.com/aditosoftware/nodejs-icinga2api/issues"
+    "url": "https://github.com/vladislavmega/sym-icinga2-api/issues"
   },
-  "homepage": "https://github.com/aditosoftware/nodejs-icinga2api#readme",
+  "homepage": "https://github.com/vladislavmega/sym-icinga2-api#readme",
   "engines": {
-    "node": ">=5.0.0"
+    "node": ">=8.0.0"
   }
 }

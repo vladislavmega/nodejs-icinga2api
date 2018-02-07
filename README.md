@@ -1,22 +1,55 @@
-# icinga2
+# sym-icinga2-api
 Icinga2 Remote api module. You can create, remove, update, etc of icinga2 objects
 
 [Icinga2 api doc](https://docs.icinga.com/icinga2/latest/doc/module/icinga2/chapter/icinga2-api)
 
+Forked from
+[nodejs-icinga2api](https://github.com/aditosoftware/nodejs-icinga2api)
+
 ## Installation
 
-    npm install icinga2-api
+    npm install sym-icinga2-api
+or 
+
+    yarn add sym-icinga2-api
+   
+    
+### ROADMAP
+1. implement support of [Icinga Event Streams](https://www.icinga.com/docs/icinga2/latest/doc/12-icinga2-api/#event-streams)
+2. refactor code to more elegant
+
     
 ### Getting started
 Example
 
-1. Check if the host "4demo" exist in monitoring.
-2. If not, create host "4demo".
+1. Check if the host "4demo" exist in monitoring. If not, create host "4demo".
+2. Promise way (recommended), you must don't send callback.
 
 ``` js
-const icingaapi = require('icinga2-api');
+const icingaapi = require('sym-icinga2-api');
 
-var icingaServer = new icingaapi("icingas2server.local", "5665", "apiUser", "apiUserPass");
+const icingaServer = new icingaapi("icingas2server.local", "5665", "apiUser", "apiUserPass");
+icingaServer.getHostState("4demo")
+  .then(result => console.log(result))
+  .catch((err) => {
+    if (err.Statuscode == "404") {
+        console.log("Host 4demo on monitoring was not found, create one");
+        
+        // Create a host on icinga2.
+        icingaServer.createHost("passive-host", "4demo", "4Demo Server", "adito", servername)
+          .then(result => console.log("Host 4demo was created successfull"))
+          .catch(err => console.error(err));
+    }
+    console.error(err);       
+  });
+```
+
+3. Callback way, compatible with original module
+
+``` js
+const icingaapi = require('sym-icinga2-api');
+
+const icingaServer = new icingaapi("icingas2server.local", "5665", "apiUser", "apiUserPass");
     icingaServer.getHostState("4demo", function (err, result) {
         if (err) {
             if (err.Statuscode == "404") {
@@ -38,6 +71,7 @@ var icingaServer = new icingaapi("icingas2server.local", "5665", "apiUser", "api
     })
 ```
 ## Methods
+####note: If you want the method to return promise - DON'T SEND callback argument
  - getServices = function (callback)
  - getService = function (ServerName, ServiceName, callback)
  - getHosts = function (callback)
@@ -161,6 +195,3 @@ var icingaServer = new icingaapi("icingas2server.local", "5665", "apiUser", "api
             })
         ```
  - updateServiceAttr = function (serviceObj, host, service, callback)
-
-## Examples
-Check [test.js](https://github.com/aditosoftware/nodejs-icinga2api/blob/master/test.js) for more details

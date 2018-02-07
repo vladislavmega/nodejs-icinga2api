@@ -1,1080 +1,1184 @@
-'use strict';
+const https = require('https');
 
-const https = require("https");
+class Icinga {
+  constructor(hostname, port, user, pass) {
+    this.options = {
+      hostname,
+      timeout: 15000,
+      port,
+      rejectUnauthorized: false,
+      auth: `${user}:${pass}`,
+    };
+  }
 
-var icingaapi = function (url, port, user, pass) {
-    this.url = url;
-    this.port = port;
-    this.user = user;
-    this.pass = pass;
-    this.timeout = 15000;
-}; //construct
+  static wrapAsPromise(callback) {
+    let toReturn;
 
-icingaapi.prototype.getServices = function (callback) {
-    var self = this;
-    var state;
+    if (typeof callback !== 'undefined') {
+      toReturn = callback;
+    } else {
+      let resolveHoist;
+      let rejectHoist;
+      toReturn = new Promise((resolve, reject) => {
+        resolveHoist = resolve;
+        rejectHoist = reject;
+      });
 
-    var options = {
-        hostname: self.url,
-        timeout: self.timeout,
-        port: self.port,
-        path: '/v1/objects/services',
-        method: 'GET',
-        rejectUnauthorized: false,
-        auth: self.user + ":" + self.pass,
+      toReturn.resolve = resolveHoist;
+      toReturn.reject = rejectHoist;
     }
 
-    var req = https.request(options, (res) => {
-        res.on('data', (successMesage) => {
-            state = {
-                "Statuscode": res.statusCode,
-                "StatusMessage": res.statusMessage,
-                "Statecustom": successMesage
-            }
-        });
+    return toReturn;
+  }
+
+  static resolveCallback(callback, payload) {
+    let toReturn;
+
+    if (typeof callback === 'object' && callback.resolve && typeof callback.resolve === 'function') {
+      callback.resolve(payload);
+    } else {
+      toReturn = callback(null, payload);
+    }
+
+    return toReturn;
+  }
+
+  static rejectCallback(callback, payload) {
+    let toReturn;
+
+    if (typeof callback === 'object' && callback.reject && typeof callback.reject === 'function') {
+      callback.reject(payload);
+    } else {
+      toReturn = callback(payload, null);
+    }
+
+    return toReturn;
+  }
+
+  getServices(callback) {
+    const wrappedCallback = this.wrapAsPromise(callback);
+    let state;
+
+    const options = {
+      ...this.options,
+      path: '/v1/objects/services',
+      method: 'GET',
+    };
+
+    const req = https.request(options, (res) => {
+      res.on('data', (successMesage) => {
+        state = {
+          Statuscode: res.statusCode,
+          StatusMessage: res.statusMessage,
+          Statecustom: successMesage,
+        }
+      });
     });
-    req.set
     req.end();
 
-    req.on('error', (e) => {
-        return callback(e, null);
+    req.on('error', e => this.rejectCallback(wrappedCallback, e));
+
+    req.on('close', () => {
+      let toReturn;
+
+      if (state.Statuscode === '200') {
+        toReturn = this.resolveCallback(wrappedCallback, `${state.Statecustom}`);
+      } else {
+        toReturn = this.rejectCallback(wrappedCallback, `${state}`);
+      }
+
+      return toReturn;
     });
 
-    req.on('close', function (e) {
-        if (state.Statuscode == "200") {
-            return callback(null, "" + state.Statecustom);
+    return wrappedCallback;
+  }
+
+  getHosts(callback) {
+    const wrappedCallback = this.wrapAsPromise(callback);
+    const options = {
+      ...this.options,
+      path: '/v1/objects/Hosts',
+      method: 'GET',
+    };
+
+    const req = https.request(options, (res) => {
+      res.on('data', (d) => {
+        let toReturn;
+
+        if (res.statusCode === '200') {
+          toReturn = this.resolveCallback(wrappedCallback, `${d}`);
         } else {
-            return callback("" + state);
+          toReturn = this.rejectCallback(wrappedCallback, {
+            Statuscode: res.statusCode,
+            StatusMessage: res.statusMessage,
+          });
         }
-    })
-}
-icingaapi.prototype.getHosts = function (callback) {
-    var self = this;
 
-    var options = {
-        hostname: self.url,
-        timeout: self.timeout,
-        port: self.port,
-        path: '/v1/objects/Hosts',
-        method: 'GET',
-        rejectUnauthorized: false,
-        auth: self.user + ":" + self.pass,
-    }
-
-    var req = https.request(options, (res) => {
-        res.on('data', (d) => {
-            if (res.statusCode == "200") {
-                return callback(null, "" + d);
-            } else {
-                return callback({
-                    "Statuscode": res.statusCode,
-                    "StatusMessage": res.statusMessage
-                }, null);
-            }
-
-        });
+        return toReturn;
+      });
     });
+
     req.end();
 
-    req.on('error', (e) => {
-        return callback(e, null);
-    });
-}
-icingaapi.prototype.getHostFiltered = function (filter, callback) {
-    var self = this;
-    var resData = '';
+    req.on('error', e => this.rejectCallback(wrappedCallback, e));
 
-    var options = {
-        hostname: self.url,
-        timeout: self.timeout,
-        port: self.port,
-        path: '/v1/objects/hosts/',
-        method: 'POST',
-        rejectUnauthorized: false,
-        auth: self.user + ":" + self.pass,
-        headers: {
-            "Accept": "application/json",
-            "Content-Type": "application/json",
-            "X-HTTP-Method-Override": "GET"
-        }
-    }
-    var req = https.request(options, function (res) {
-        res.on('data', function (chunk) {
-            resData += chunk;
-        })
-        res.on('end', function () {
-            if (res.statusCode == "200") {
-                var output = JSON.parse(resData);
-                return callback(null, output.results);
-            } else {
-                return callback({
-                    "Statuscode": res.statusCode,
-                    "StatusMessage": res.statusMessage
-                }, null);
-            }
-        })
-    });
-    req.end(JSON.stringify(filter));
-}
+    return wrappedCallback;
+  }
 
-icingaapi.prototype.getServiceFiltered = function (filter, callback) {
-    var self = this;
-    var resData = '';
+  getHostFiltered(filter, callback) {
+    const wrappedCallback = this.wrapAsPromise(callback);
+    let resData = '';
 
-    var options = {
-        hostname: self.url,
-        timeout: self.timeout,
-        port: self.port,
-        path: '/v1/objects/services/',
-        method: 'POST',
-        rejectUnauthorized: false,
-        auth: self.user + ":" + self.pass,
-        headers: {
-            "Accept": "application/json",
-            "Content-Type": "application/json",
-            "X-HTTP-Method-Override": "GET"
-        }
-    }
-    var req = https.request(options, function (res) {
-        res.on('data', function (chunk) {
-            resData += chunk;
-        })
-        res.on('end', function () {
-            if (res.statusCode == "200") {
-                var output = JSON.parse(resData);
-                return callback(null, output.results);
-            } else {
-                return callback({
-                    "Statuscode": res.statusCode,
-                    "StatusMessage": res.statusMessage
-                }, null);
-            }
-        })
-    });
-    req.end(JSON.stringify(filter));
-}
+    const options = {
+      ...this.options,
+      path: '/v1/objects/hosts/',
+      method: 'POST',
+      headers: {
+        Accept: 'application/json',
+        'Content-Type': 'application/json',
+        'X-HTTP-Method-Override': 'GET',
+      },
+    };
 
-icingaapi.prototype.getService = function (ServerName, ServiceName, callback) {
-    var self = this;
-    var state;
+    const req = https.request(options, (res) => {
+      res.on('data', (chunk) => {
+        resData += chunk;
+      });
 
-    var options = {
-        hostname: self.url,
-        timeout: self.timeout,
-        port: self.port,
-        path: '/v1/objects/services/' + ServerName + "!" + ServiceName,
-        method: 'GET',
-        rejectUnauthorized: false,
-        auth: self.user + ":" + self.pass,
-    }
+      res.on('end', () => {
+        let toReturn;
 
-    var req = https.request(options, (res) => {
-        res.on('data', (successMesage) => {
-            state = {
-                "Statuscode": res.statusCode,
-                "StatusMessage": res.statusMessage,
-                "Statecustom": successMesage
-            }
-        });
-    });
-    req.end();
-
-    req.on('error', (e) => {
-        return callback(e, null);
-    });
-
-    req.on('close', function (e) {
-        if (state.Statuscode == "200") {
-            return callback(null, {
-                "Statuscode": "" + state.Statuscode,
-                "Statecustom": "" + state.Statecustom
-            });
+        if (res.statusCode === '200') {
+          const output = JSON.parse(resData);
+          toReturn = this.resolveCallback(wrappedCallback, output.results);
         } else {
-            return callback({
-                "Statuscode": state.Statuscode,
-                "StatusMessage": state.StatusMessage
-            }, null);
+          toReturn = this.rejectCallback(wrappedCallback, {
+            Statuscode: res.statusCode,
+            StatusMessage: res.statusMessage,
+          });
         }
-    })
 
+        return toReturn;
+      })
+    });
 
-}
-icingaapi.prototype.getHost = function (ServerName, callback) {
-    var self = this;
-    var options = {
-        hostname: self.url,
-        timeout: self.timeout,
-        port: self.port,
-        path: '/v1/objects/hosts/' + ServerName,
-        method: 'GET',
-        rejectUnauthorized: false,
-        auth: self.user + ":" + self.pass,
-    }
+    req.end(JSON.stringify(filter));
 
-    var req = https.request(options, (res) => {
-        res.on('data', (d) => {
-            if (res.statusCode == "200") {
-                return callback(null, "" + d);
-            } else {
-                return callback({
-                    "Statuscode": res.statusCode,
-                    "StatusMessage": res.statusMessage
-                }, null);
-            }
+    return wrappedCallback;
+  }
 
+  getServiceFiltered(filter, callback) {
+    const wrappedCallback = this.wrapAsPromise(callback);
+    let resData = '';
+
+    const options = {
+      ...this.options,
+      path: '/v1/objects/services/',
+      method: 'POST',
+      headers: {
+        Accept: 'application/json',
+        'Content-Type': 'application/json',
+        'X-HTTP-Method-Override': 'GET',
+      },
+    };
+
+    const req = https.request(options, (res) => {
+      res.on('data', (chunk) => {
+        resData += chunk;
+      });
+
+      res.on('end', () => {
+        let toReturn;
+
+        if (res.statusCode === '200') {
+          const output = JSON.parse(resData);
+          toReturn = this.resolveCallback(wrappedCallback, output.results);
+        } else {
+          toReturn = this.rejectCallback(wrappedCallback, {
+            Statuscode: res.statusCode,
+            StatusMessage: res.statusMessage,
+          });
+        }
+
+        return toReturn;
+      })
+    });
+
+    req.end(JSON.stringify(filter));
+
+    return wrappedCallback;
+  }
+
+  getService(ServerName, ServiceName, callback) {
+    const wrappedCallback = this.wrapAsPromise(callback);
+    let state;
+
+    const options = {
+      ...this.options,
+      path: `/v1/objects/services/${ServerName}!${ServiceName}`,
+      method: 'GET',
+    };
+
+    const req = https.request(options, (res) => {
+      res.on('data', (successMesage) => {
+        state = {
+          Statuscode: res.statusCode,
+          StatusMessage: res.statusMessage,
+          StateCustom: successMesage,
+        }
+      });
+    });
+
+    req.end();
+
+    req.on('error', e => this.rejectCallback(wrappedCallback, e));
+
+    req.on('close', () => {
+      let toReturn;
+
+      if (state.statusCode === '200') {
+        toReturn = this.resolveCallback(wrappedCallback, {
+          Statuscode: `${state.Statuscode}`,
+          Statecustom: `${state.Statecustom}`,
         });
+      } else {
+        toReturn = this.rejectCallback(wrappedCallback, {
+          Statuscode: state.Statuscode,
+          StatusMessage: state.StatusMessage,
+        });
+      }
+
+      return toReturn;
+    });
+
+    return wrappedCallback;
+  }
+
+  getHost(ServerName, callback) {
+    const wrappedCallback = this.wrapAsPromise(callback);
+    const options = {
+      ...this.options,
+      path: `/v1/objects/hosts/${ServerName}`,
+      method: 'GET',
+    };
+
+    const req = https.request(options, (res) => {
+      res.on('data', (d) => {
+        let toReturn;
+
+        if (res.statusCode === '200') {
+          toReturn = this.resolveCallback(wrappedCallback, `${d}`);
+        } else {
+          toReturn = this.rejectCallback(wrappedCallback, {
+            Statuscode: res.statusCode,
+            StatusMessage: res.statusMessage,
+          });
+        }
+
+        return toReturn;
+      });
     });
     req.end();
 
-    req.on('error', (e) => {
-        return callback(e, null);
-    });
-}
-icingaapi.prototype.getServiceWithState = function (state, callback) {
-    var self = this;
+    req.on('error', e => this.rejectCallback(wrappedCallback, e));
 
-    var body = JSON.stringify({
-        "filter": "service.state == state",
-        "filter_vars": {
-            "state": state
-        }
+    return wrappedCallback;
+  }
+
+  getServiceWithState(state, callback) {
+    const wrappedCallback = this.wrapAsPromise(callback);
+    const body = JSON.stringify({
+      filter: 'service.state == state',
+      filter_vars: {
+        state,
+      },
     });
-    var options = {
-        hostname: self.url,
-        timeout: self.timeout,
-        port: self.port,
-        path: '/v1/objects/services',
-        method: 'POST',
-        rejectUnauthorized: false,
-        auth: self.user + ":" + self.pass,
-        headers: {
-            "Accept": "application/json",
-            "Content-Type": "application/json",
-            "X-HTTP-Method-Override": "GET"
+
+    const options = {
+      ...this.options,
+      path: '/v1/objects/services',
+      method: 'POST',
+      headers: {
+        Accept: 'application/json',
+        'Content-Type': 'application/json',
+        'X-HTTP-Method-Override': 'GET',
+      },
+    };
+
+    const req = https.request(options, (res) => {
+      res.on('data', (d) => {
+        let toReturn;
+
+        if (res.statusCode === '200') {
+          const output = JSON.parse(d);
+          toReturn = this.resolveCallback(wrappedCallback, output.results);
+        } else {
+          toReturn = this.rejectCallback(wrappedCallback, {
+            Statuscode: res.statusCode,
+            StatusMessage: res.statusMessage,
+          });
         }
-    }
-    var req = https.request(options, (res) => {
-        res.on('data', (d) => {
-            if (res.statusCode == "200") {
-                var output = JSON.parse(d);
-                return callback(null, output.results);
-            } else {
-                return callback({
-                    "Statuscode": res.statusCode,
-                    "StatusMessage": res.statusMessage
-                }, null);
-            }
-        });
+
+        return toReturn;
+      });
     });
     req.end(body);
 
-    req.on('error', (e) => {
-        return callback(e, null);
-    });
-}
-icingaapi.prototype.createHost = function (template, host, displayname, gruppe, onServer, callback) {
-    var self = this;
-    var state;
-    var hostObj = JSON.stringify({
-        "templates": [template],
-        "attrs": {
-            "display_name": displayname,
-            "vars.group": gruppe,
-            "vars.server": onServer
-        }
-    })
-    this.createHostCustom(hostObj, host, callback);
-}
-icingaapi.prototype.createService = function (template, host, service, displayname, gruppe, onServer, callback) {
-    var self = this;
-    var state;
+    req.on('error', e => this.rejectCallback(wrappedCallback, e));
 
-    var serviceObj = JSON.stringify({
-        "templates": [template],
-        "attrs": {
-            "display_name": displayname,
-            "vars.group": gruppe,
-            "vars.server": onServer
-        }
-    })
-    var options = {
-        hostname: self.url,
-        timeout: self.timeout,
-        port: self.port,
-        path: '/v1/objects/services/' + host + "!" + service,
-        rejectUnauthorized: false,
-        auth: self.user + ":" + self.pass,
-        method: 'PUT',
-        headers: {
-            "Accept": "application/json",
-            "Content-Type": "application/json"
-        }
-    };
-    var req = https.request(options, (res) => {
-        res.on('data', (successMesage) => {
-            state = {
-                "Statuscode": res.statusCode,
-                "StatusMessage": res.statusMessage,
-                "Statecustom": successMesage
-            }
-        });
+    return wrappedCallback;
+  }
+
+  createHost(template, host, displayname, group, onServer, callback) {
+    const wrappedCallback = this.wrapAsPromise(callback);
+    const hostObj = JSON.stringify({
+      templates: [template],
+      attrs: {
+        display_name: displayname,
+        'vars.group': group,
+        'vars.server': onServer,
+      },
     });
+
+    this.createHostCustom(hostObj, host, wrappedCallback);
+  }
+
+  createService(template, host, service, displayname, gruppe, onServer, callback) {
+    const wrappedCallback = this.wrapAsPromise(callback);
+    let state;
+
+    const serviceObj = JSON.stringify({
+      templates: [template],
+      attrs: {
+        display_name: displayname,
+        'vars.group': gruppe,
+        'vars.server': onServer,
+      },
+    });
+
+    const options = {
+      ...this.options,
+      path: `/v1/objects/services/${host}!${service}`,
+      method: 'PUT',
+      headers: {
+        Accept: 'application/json',
+        'Content-Type': 'application/json',
+      },
+    };
+
+    const req = https.request(options, (res) => {
+      res.on('data', (successMesage) => {
+        state = {
+          Statuscode: res.statusCode,
+          StatusMessage: res.statusMessage,
+          StateCustom: successMesage,
+        }
+      });
+    });
+
     req.end(serviceObj);
 
-    req.on('error', (e) => {
-        return callback(e, null);
+    req.on('error', e => this.rejectCallback(wrappedCallback, e));
+
+    req.on('close', () => {
+      let toReturn;
+
+      if (state.statusCode === '200') {
+        toReturn = this.resolveCallback(wrappedCallback, `${state.Statecustom}`);
+      } else {
+        toReturn = this.rejectCallback(wrappedCallback, `${state.Statecustom}`);
+      }
+
+      return toReturn;
     });
 
-    req.on('close', function (e) {
-        if (state.Statuscode == "200") {
-            return callback(null, "" + state.Statecustom);
+    return wrappedCallback;
+  }
+
+  createServiceCustom(serviceObj, host, service, callback) {
+    const wrappedCallback = this.wrapAsPromise(callback);
+    const options = {
+      ...this.options,
+      path: `/v1/objects/services/${host}!${service}`,
+      method: 'PUT',
+      headers: {
+        Accept: 'application/json',
+        'Content-Type': 'application/json',
+      },
+    };
+
+    const req = https.request(options, (res) => {
+      res.on('data', () => {
+        let toReturn;
+
+        if (res.statusCode === '200') {
+          toReturn = this.resolveCallback(wrappedCallback);
         } else {
-            return callback("" + state.Statecustom, null);
+          toReturn = this.rejectCallback(wrappedCallback, {
+            Statuscode: res.statusCode,
+            StatusMessage: res.statusMessage,
+          });
         }
-    })
-}
-icingaapi.prototype.createServiceCustom = function (serviceObj, host, service, callback) {
-    var self = this;
 
-    var options = {
-        hostname: self.url,
-        timeout: self.timeout,
-        port: self.port,
-        path: '/v1/objects/services/' + host + "!" + service,
-        rejectUnauthorized: false,
-        auth: self.user + ":" + self.pass,
-        method: 'PUT',
-        headers: {
-            "Accept": "application/json",
-            "Content-Type": "application/json"
-        }
-    };
-    var req = https.request(options, (res) => {
-        res.on('data', (successMesage) => {
-            if (res.statusCode == "200") {
-                return callback(null, "" + successMesage);
-            } else {
-                return callback({
-                    "Statuscode": res.statusCode,
-                    "StatusMessage": res.statusMessage
-                }, null);
-            }
-        });
+        return toReturn;
+      });
     });
+
     req.end(serviceObj);
 
-    req.on('error', (e) => {
-        return callback(e, null);
-    });
-}
-icingaapi.prototype.createHostCustom = function (hostObj, host, callback) {
-    var self = this;
+    req.on('error', e => this.rejectCallback(wrappedCallback, e));
 
-    var options = {
-        hostname: self.url,
-        timeout: self.timeout,
-        port: self.port,
-        path: '/v1/objects/hosts/' + host,
-        rejectUnauthorized: false,
-        auth: self.user + ":" + self.pass,
-        method: 'PUT',
-        headers: {
-            "Accept": "application/json",
-            "Content-Type": "application/json"
-        }
+    return wrappedCallback;
+  }
+
+  createHostCustom(hostObj, host, callback) {
+    const wrappedCallback = this.wrapAsPromise(callback);
+    const options = {
+      ...this.options,
+      path: `/v1/objects/hosts/${host}`,
+      method: 'PUT',
+      headers: {
+        Accept: 'application/json',
+        'Content-Type': 'application/json',
+      },
     };
-    var req = https.request(options, (res) => {
-        res.on('data', (statusMessage) => {
-            if (res.statusCode == "200") {
-                return callback(null, "" + statusMessage);
-            } else {
-                return callback({
-                    "Statuscode": res.statusCode,
-                    "StatusMessage": res.statusMessage
-                }, null);
-            }
-        });
+
+    const req = https.request(options, (res) => {
+      res.on('data', (statusMessage) => {
+        let toReturn;
+
+        if (res.statusCode === '200') {
+          toReturn = this.resolveCallback(wrappedCallback, `${statusMessage}`);
+        } else {
+          toReturn = this.rejectCallback(wrappedCallback, {
+            Statuscode: res.statusCode,
+            StatusMessage: res.statusMessage,
+          });
+        }
+
+        return toReturn;
+      });
     });
+
     req.end(hostObj);
 
-    req.on('error', (e) => {
-        return callback(e, null);
-    });
-}
-icingaapi.prototype.deleteHost = function (host, callback) {
-    var self = this;
-    var options = {
-        hostname: self.url,
-        timeout: self.timeout,
-        port: self.port,
-        path: '/v1/objects/hosts/' + host + "?cascade=1",
-        method: 'DELETE',
-        rejectUnauthorized: false,
-        auth: self.user + ":" + self.pass,
-        headers: {
-            "Accept": "application/json",
-            "Content-Type": "application/json"
+    req.on('error', e => this.rejectCallback(wrappedCallback, e));
+
+    return wrappedCallback;
+  }
+
+  deleteHost(host, callback) {
+    const wrappedCallback = this.wrapAsPromise(callback);
+    const options = {
+      ...this.options,
+      path: `/v1/objects/hosts/${host}?cascade=1`,
+      method: 'DELETE',
+      headers: {
+        Accept: 'application/json',
+        'Content-Type': 'application/json',
+      },
+    };
+
+    const req = https.request(options, (res) => {
+      res.on('data', (d) => {
+        let toReturn;
+
+        if (res.statusCode === '200') {
+          toReturn = this.resolveCallback(wrappedCallback, `${d}`);
+        } else {
+          toReturn = this.rejectCallback(wrappedCallback, {
+            Statuscode: res.statusCode,
+            StatusMessage: res.statusMessage,
+          });
         }
-    }
 
-    var req = https.request(options, (res) => {
-        res.on('data', (d) => {
-            if (res.statusCode == "200") {
-                return callback(null, "" + d);
-            } else {
-                return callback({
-                    "Statuscode": res.statusCode,
-                    "StatusMessage": res.statusMessage
-                }, null);
-            }
-
-        });
+        return toReturn;
+      });
     });
+
     req.end();
 
-    req.on('error', (e) => {
-        return callback(e, null);
-    });
-}
-icingaapi.prototype.deleteService = function (service, host, callback) {
-    var self = this;
-    var options = {
-        hostname: self.url,
-        timeout: self.timeout,
-        port: self.port,
-        path: '/v1/objects/services/' + host + "!" + service + "?cascade=1",
-        method: 'DELETE',
-        rejectUnauthorized: false,
-        auth: self.user + ":" + self.pass,
-        headers: {
-            "Accept": "application/json",
-            "Content-Type": "application/json"
+    req.on('error', e => this.rejectCallback(wrappedCallback, e));
+
+    return wrappedCallback;
+  }
+
+  deleteService(service, host, callback) {
+    const wrappedCallback = this.wrapAsPromise(callback);
+    const options = {
+      ...this.options,
+      path: `/v1/objects/services/${host}!${service}?cascade=1`,
+      method: 'DELETE',
+      headers: {
+        Accept: 'application/json',
+        'Content-Type': 'application/json',
+      },
+    };
+
+    const req = https.request(options, (res) => {
+      res.on('data', (stateMessage) => {
+        let toReturn;
+        if (res.statusCode === '200') {
+          toReturn = this.resolveCallback(wrappedCallback, `${stateMessage}`);
+        } else {
+          toReturn = this.rejectCallback(wrappedCallback, {
+            Statuscode: res.statusCode,
+            StatusMessage: res.statusMessage,
+          });
         }
-    }
 
-    var req = https.request(options, (res) => {
-        res.on('data', (stateMessage) => {
-            if (res.statusCode == "200") {
-                return callback(null, "" + stateMessage);
-            } else {
-                return callback({
-                    "Statuscode": res.statusCode,
-                    "StatusMessage": res.statusMessage
-                }, null);
-            }
-
-        });
+        return toReturn;
+      });
     });
+
     req.end();
 
-    req.on('error', (e) => {
-        return callback(e, null);
+    req.on('error', e => this.rejectCallback(wrappedCallback, e));
+
+    return wrappedCallback;
+  }
+
+  setHostDowntime(dObj, hostname, callback) {
+    const wrappedCallback = this.wrapAsPromise(callback);
+    let statemess;
+
+    const options = {
+      ...this.options,
+      path: `/v1/actions/schedule-downtime?type=Host&filter=host.name==%22${hostname}%22`,
+      method: 'POST',
+      headers: {
+        Accept: 'application/json',
+        'Content-Type': 'application/json',
+      },
+    };
+
+    const req = https.request(options, (res) => {
+      res.on('data', () => {
+        statemess = {
+          Statuscode: res.statusCode,
+          StatusMessage: res.statusMessage,
+        };
+      });
     });
-}
-icingaapi.prototype.setHostDowntime = function (dObj, hostname, callback) {
-    var self = this;
-
-    var options = {
-        hostname: self.url,
-        timeout: self.timeout,
-        port: self.port,
-        path: '/v1/actions/schedule-downtime?type=Host&filter=host.name==%22' + hostname + '%22',
-        method: 'POST',
-        rejectUnauthorized: false,
-        auth: self.user + ":" + self.pass,
-        headers: {
-            'Accept': 'application/json',
-            'Content-Type': 'application/json'
-        }
-    }
-
-    var req = https.request(options, (res) => {
-        res.on('data', (stateMessage) => {
-            statemess = {
-                'StatusCode': res.statusCode,
-                'StatusMessage': res.statusMessage,
-            }
-        })
-    })
 
     req.end(JSON.stringify(dObj));
 
-    req.on('close', function (e) {
-        if (statemess.StatusCode == "200") {
-            return callback(null, {
-                'StatusCode': statemess.StatusCode,
-                'StatusMessage': statemess.StatusMessage,
-            });
-        } else {
-            return callback({
-                'StatusCode': statemess.StatusCode,
-                'StatusMessage': statemess.StatusMessage,
-            }, null);
-        }
-    })
-}
-icingaapi.prototype.setFilteredDowntime = function (dFilter, callback) {
-    var self = this;
+    req.on('close', () => {
+      let toReturn;
 
-    var options = {
-        hostname: self.url,
-        timeout: self.timeout,
-        port: self.port,
-        path: '/v1/actions/schedule-downtime',
-        method: 'POST',
-        rejectUnauthorized: false,
-        auth: self.user + ":" + self.pass,
-        headers: {
-            'Accept': 'application/json',
-            'Content-Type': 'application/json'
-        }
-    }
+      if (statemess.statusCode === '200') {
+        toReturn = this.resolveCallback(wrappedCallback, {
+          Statuscode: statemess.StatusCode,
+          StatusMessage: statemess.StatusMessage,
+        });
+      } else {
+        toReturn = this.rejectCallback(wrappedCallback, {
+          Statuscode: statemess.StatusCode,
+          StatusMessage: statemess.StatusMessage,
+        });
+      }
 
-    var req = https.request(options, (res) => {
-        res.on('data', (stateMessage) => {
-            statemess = {
-                'StatusCode': res.statusCode,
-                'StatusMessage': res.statusMessage,
-            }
-        })
-    })
+      return toReturn;
+    });
+
+    return wrappedCallback;
+  }
+
+  setFilteredDowntime(dFilter, callback) {
+    const wrappedCallback = this.wrapAsPromise(callback);
+    let statemess;
+
+    const options = {
+      ...this.options,
+      path: '/v1/actions/schedule-downtime',
+      method: 'POST',
+      headers: {
+        Accept: 'application/json',
+        'Content-Type': 'application/json',
+      },
+    };
+
+    const req = https.request(options, (res) => {
+      res.on('data', () => {
+        statemess = {
+          Statuscode: res.statusCode,
+          StatusMessage: res.statusMessage,
+        }
+      })
+    });
 
     req.end(JSON.stringify(dFilter));
 
-    req.on('close', function (e) {
-        if (statemess.StatusCode == "200") {
-            return callback(null, {
-                'StatusCode': statemess.StatusCode,
-                'StatusMessage': statemess.StatusMessage,
-            });
-        } else {
-            return callback({
-                'StatusCode': statemess.StatusCode,
-                'StatusMessage': statemess.StatusMessage,
-            }, null);
-        }
-    })
-}
-icingaapi.prototype.removeFilteredDowntime = function (dFilter, callback) {
-    var self = this;
+    req.on('close', () => {
+      let toReturn;
 
-    var options = {
-        hostname: self.url,
-        timeout: self.timeout,
-        port: self.port,
-        path: '/v1/actions/remove-downtime',
-        method: 'POST',
-        rejectUnauthorized: false,
-        auth: self.user + ":" + self.pass,
-        headers: {
-            'Accept': 'application/json',
-            'Content-Type': 'application/json'
-        }
-    }
+      if (statemess.statusCode === '200') {
+        toReturn = this.resolveCallback(wrappedCallback, {
+          Statuscode: statemess.StatusCode,
+          StatusMessage: statemess.StatusMessage,
+        });
+      } else {
+        toReturn = this.rejectCallback(wrappedCallback, {
+          Statuscode: statemess.StatusCode,
+          StatusMessage: statemess.StatusMessage,
+        });
+      }
 
-    var req = https.request(options, (res) => {
-        res.on('data', (stateMessage) => {
-            statemess = {
-                'StatusCode': res.statusCode,
-                'StatusMessage': res.statusMessage,
-            }
-        })
-    })
+      return toReturn;
+    });
+
+    return wrappedCallback;
+  }
+
+  removeFilteredDowntime(dFilter, callback) {
+    const wrappedCallback = this.wrapAsPromise(callback);
+    let statemess;
+
+    const options = {
+      ...this.options,
+      path: '/v1/actions/remove-downtime',
+      method: 'POST',
+      headers: {
+        Accept: 'application/json',
+        'Content-Type': 'application/json',
+      },
+    };
+
+    const req = https.request(options, (res) => {
+      res.on('data', () => {
+        statemess = {
+          Statuscode: res.statusCode,
+          StatusMessage: res.statusMessage,
+        };
+      });
+    });
 
     req.end(JSON.stringify(dFilter));
 
-    req.on('close', function (e) {
-        if (statemess.StatusCode == "200") {
-            return callback(null, {
-                'StatusCode': statemess.StatusCode,
-                'StatusMessage': statemess.StatusMessage,
-            });
-        } else {
-            return callback({
-                'StatusCode': statemess.StatusCode,
-                'StatusMessage': statemess.StatusMessage,
-            }, null);
-        }
-    })
+    req.on('close', () => {
+      let toReturn;
 
-}
-icingaapi.prototype.disableHostNotification = function (hostname, callback) {
-    var self = this;
+      if (statemess.statusCode === '200') {
+        toReturn = this.resolveCallback(wrappedCallback, {
+          Statuscode: statemess.StatusCode,
+          StatusMessage: statemess.StatusMessage,
+        });
+      } else {
+        toReturn = this.rejectCallback(wrappedCallback, {
+          Statuscode: statemess.StatusCode,
+          StatusMessage: statemess.StatusMessage,
+        });
+      }
 
-    var notificationFilter = ({
-        'attrs': {
-            'enable_notifications': false
-        }
-    })
+      return toReturn;
+    });
 
-    var options = {
-        hostname: self.url,
-        timeout: self.timeout,
-        port: self.port,
-        path: '/v1/objects/hosts/' + hostname,
-        method: 'POST',
-        rejectUnauthorized: false,
-        auth: self.user + ":" + self.pass,
-        headers: {
-            'Accept': 'application/json',
-            'Content-Type': 'application/json'
-        }
-    }
+    return wrappedCallback;
+  }
 
-    var req = https.request(options, (res) => {
-        res.on('data', (stateMessage) => {
-            statemess = {
-                'StatusCode': res.statusCode,
-                'StatusMessage': res.statusMessage,
-            }
-        })
-    })
+  disableHostNotification(hostname, callback) {
+    const wrappedCallback = this.wrapAsPromise(callback);
+    let statemess;
+
+    const notificationFilter = {
+      attrs: {
+        enable_notifications: false,
+      },
+    };
+
+    const options = {
+      ...this.options,
+      path: `/v1/objects/hosts/${hostname}`,
+      method: 'POST',
+      headers: {
+        Accept: 'application/json',
+        'Content-Type': 'application/json',
+      },
+    };
+
+    const req = https.request(options, (res) => {
+      res.on('data', () => {
+        statemess = {
+          Statuscode: res.statusCode,
+          StatusMessage: res.statusMessage,
+        };
+      });
+    });
+
     req.end(JSON.stringify(notificationFilter));
 
-    req.on('error', (e) => {
-        return callback(e, null);
-    });
+    req.on('error', e => this.rejectCallback(wrappedCallback, e));
 
-    req.on('close', function (e) {
-        if (statemess.Statuscode == "200") {
-            return callback(null, {
-                'StatusCode': statemess.StatusCode,
-                'StatusMessage': statemess.StatusMessage,
-            });
-        } else {
-            return callback({
-                'StatusCode': statemess.StatusCode,
-                'StatusMessage': statemess.StatusMessage,
-            }, null);
-        }
-    })
-}
-icingaapi.prototype.setHostState = function (host, hostState, StateMessage, callback) {
-    var self = this;
-    var statemess;
+    req.on('close', () => {
+      let toReturn;
 
-    var state = ({
-        "exit_status": hostState,
-        "plugin_output": StateMessage
-    });
-
-    var options = {
-        hostname: self.url,
-        timeout: self.timeout,
-        port: self.port,
-        path: '/v1/actions/process-check-result?host=' + host,
-        method: 'POST',
-        rejectUnauthorized: false,
-        auth: self.user + ":" + self.pass,
-        headers: {
-            "Accept": "application/json",
-            "Content-Type": "application/json"
-        }
-    }
-    var req = https.request(options, (res) => {
-        res.on('data', (stateMessage) => {
-            statemess = {
-                "Statuscode": res.statusCode,
-                "StatusMessage": res.statusMessage,
-                "Statecustom": stateMessage
-            }
+      if (statemess.statusCode === '200') {
+        toReturn = this.resolveCallback(wrappedCallback, {
+          Statuscode: statemess.StatusCode,
+          StatusMessage: statemess.StatusMessage,
         });
+      } else {
+        toReturn = this.rejectCallback(wrappedCallback, {
+          Statuscode: statemess.StatusCode,
+          StatusMessage: statemess.StatusMessage,
+        });
+      }
+
+      return toReturn;
     });
+
+    return wrappedCallback;
+  }
+
+  setHostState(host, hostState, StateMessage, callback) {
+    const wrappedCallback = this.wrapAsPromise(callback);
+    let statemess;
+
+    const state = {
+      exit_status: hostState,
+      plugin_output: StateMessage,
+    };
+
+    const options = {
+      ...this.options,
+      path: `/v1/actions/process-check-result?host=${host}`,
+      method: 'POST',
+      headers: {
+        Accept: 'application/json',
+        'Content-Type': 'application/json',
+      },
+    };
+
+    const req = https.request(options, (res) => {
+      res.on('data', (stateMessage) => {
+        statemess = {
+          Statuscode: res.statusCode,
+          StatusMessage: res.statusMessage,
+          StateCustom: stateMessage,
+        }
+      });
+    });
+
     req.end(JSON.stringify(state));
 
-    req.on('error', (e) => {
-        return callback(e, null);
-    });
+    req.on('error', e => this.rejectCallback(wrappedCallback, e));
 
-    req.on('close', function (e) {
-        if (statemess.Statuscode == "200") {
-            return callback(null, {
-                "Statuscode": statemess.Statuscode,
-                "StatusMessage": statemess.StatusMessage
-            });
-        } else {
-            return callback({
-                "Statuscode": statemess.Statuscode,
-                "StatusMessage": statemess.StatusMessage
-            }, null);
-        }
-    })
-}
-icingaapi.prototype.setServiceState = function (service, host, serviceState, serviceMessage, callback) {
-    var self = this;
-    var statemess;
-    var state = ({
-        "exit_status": serviceState,
-    });
-    if (serviceState == 0) {
-        state.plugin_output = serviceMessage;
-    }
-    if (serviceState == 1) {
-        state.plugin_output = "WARNING: " + serviceMessage;
-    }
-    if (serviceState == 2) {
-        state.plugin_output = "ERROR: " + serviceMessage;
-    }
-    if (serviceState == 3) {
-        state.plugin_output = "UNKNOWN:" + serviceMessage;
-    }
+    req.on('close', () => {
+      let toReturn;
 
-    var options = {
-        hostname: self.url,
-        timeout: self.timeout,
-        port: self.port,
-        path: '/v1/actions/process-check-result?service=' + host + "!" + service,
-        method: 'POST',
-        rejectUnauthorized: false,
-        auth: self.user + ":" + self.pass,
-        headers: {
-            "Accept": "application/json",
-            "Content-Type": "application/json"
-        }
-    }
-    var req = https.request(options, (res) => {
-        res.on('data', (stateMessage) => {
-            statemess = {
-                "Statuscode": res.statusCode,
-                "StatusMessage": res.statusMessage,
-                "Statecustom": stateMessage
-            }
+      if (statemess.statusCode === '200') {
+        toReturn = this.resolveCallback(wrappedCallback, {
+          Statuscode: statemess.Statuscode,
+          StatusMessage: statemess.StatusMessage,
         });
+      } else {
+        toReturn = this.rejectCallback(wrappedCallback, {
+          Statuscode: statemess.Statuscode,
+          StatusMessage: statemess.StatusMessage,
+        });
+      }
+
+      return toReturn;
     });
+
+    return wrappedCallback;
+  }
+
+  setServiceState(service, host, serviceState, serviceMessage, callback) {
+    const wrappedCallback = this.wrapAsPromise(callback);
+    let statemess;
+    const state = {
+      exit_status: serviceState,
+    };
+
+    if (serviceState === 0) {
+      state.plugin_output = serviceMessage;
+    }
+    if (serviceState === 1) {
+      state.plugin_output = `WARNING: ${serviceMessage}`;
+    }
+    if (serviceState === 2) {
+      state.plugin_output = `ERROR: ${serviceMessage}`;
+    }
+    if (serviceState === 3) {
+      state.plugin_output = `UNKNOWN: ${serviceMessage}`;
+    }
+
+    const options = {
+      ...this.options,
+      path: `/v1/actions/process-check-result?service=${host}!${service}`,
+      method: 'POST',
+      headers: {
+        Accept: 'application/json',
+        'Content-Type': 'application/json',
+      },
+    };
+
+    const req = https.request(options, (res) => {
+      res.on('data', (stateMessage) => {
+        statemess = {
+          Statuscode: res.statusCode,
+          StatusMessage: res.statusMessage,
+          StateCustom: stateMessage,
+        };
+      });
+    });
+
     req.end(JSON.stringify(state));
 
-    req.on('error', (e) => {
-        return callback(e, null);
-    });
+    req.on('error', e => this.rejectCallback(wrappedCallback, e));
 
-    req.on('close', function (e) {
-        if (statemess.Statuscode == "200") {
-            return callback(null, {
-                "Statuscode": statemess.Statuscode,
-                "StatusMessage": statemess.StatusMessage
-            });
-        } else {
-            return callback({
-                "Statuscode": statemess.statusCode,
-                "StatusMessage": statemess.statusMessage
-            }, null);
-        }
-    })
-}
-icingaapi.prototype.getHostState = function (hostName, callback) {
-    var self = this;
+    req.on('close', () => {
+      let toReturn;
 
-    var options = {
-        hostname: self.url,
-        timeout: self.timeout,
-        port: self.port,
-        path: '/v1/objects/hosts/' + hostName + '?attrs=state',
-        method: 'GET',
-        rejectUnauthorized: false,
-        auth: self.user + ":" + self.pass,
-    }
-
-    var req = https.request(options, (res) => {
-        res.on('data', (d) => {
-            if (res.statusCode == "200") {
-                var rs = d.toString();
-                var result = JSON.parse(rs).results;
-                var output = {
-                    "state": result[0].attrs.state,
-                    "name": result[0].name
-                }
-                return callback(null, output);
-            } else {
-                return callback({
-                    "Statuscode": res.statusCode,
-                    "StatusMessage": res.statusMessage
-                }, null);
-            }
-
+      if (statemess.statusCode === '200') {
+        toReturn = this.resolveCallback(wrappedCallback, {
+          Statuscode: statemess.Statuscode,
+          StatusMessage: statemess.StatusMessage,
         });
+      } else {
+        toReturn = this.rejectCallback(wrappedCallback, {
+          Statuscode: statemess.statusCode,
+          StatusMessage: statemess.statusMessage,
+        });
+      }
+
+      return toReturn;
     });
+
+    return wrappedCallback;
+  }
+
+  getHostState(hostName, callback) {
+    const wrappedCallback = this.wrapAsPromise(callback);
+    const options = {
+      ...this.options,
+      path: `/v1/objects/hosts/${hostName}?attrs=state`,
+      method: 'GET',
+    };
+
+    const req = https.request(options, (res) => {
+      res.on('data', (d) => {
+        let toReturn;
+
+        if (res.statusCode === '200') {
+          const rs = d.toString();
+          const result = JSON.parse(rs).results;
+          const output = {
+            state: result[0].attrs.state,
+            name: result[0].name,
+          };
+
+          toReturn = this.resolveCallback(wrappedCallback, output);
+        } else {
+          toReturn = this.rejectCallback(wrappedCallback, {
+            Statuscode: res.statusCode,
+            StatusMessage: res.statusMessage,
+          });
+        }
+
+        return toReturn;
+      });
+    });
+
     req.end();
 
-    req.on('error', (e) => {
-        return callback(e, null);
-    });
-}
-icingaapi.prototype.setServicePerfdata = function (service, server, state, output, perfarr, callback) {
-    var self = this;
-    var resData = '';
-    var postBody = {
-        'exit_status': state,
-        'plugin_output': output,
-        'performance_data': perfarr
-    }
+    req.on('error', e => this.rejectCallback(wrappedCallback, e));
 
-    var options = {
-        hostname: self.url,
-        timeout: self.timeout,
-        port: self.port,
-        path: '/v1/actions/process-check-result?service=' + server + "!" + service,
-        method: 'POST',
-        rejectUnauthorized: false,
-        auth: self.user + ":" + self.pass,
-        headers: {
-            "Accept": "application/json",
-            "Content-Type": "application/json"
-        }
-    }
-    var req = https.request(options, function (res) {
-        res.on('data', function (chunk) {
-            resData += chunk;
-        })
-        res.on('end', function () {
-            if (res.statusCode == "200") {
-                var output = JSON.parse(resData);
-                return callback(null, output.results);
-            } else {
-                return callback({
-                    "Statuscode": res.statusCode,
-                    "StatusMessage": res.statusMessage
-                }, null);
-            }
-        })
-    });
-    req.end(JSON.stringify(postBody));
-}
-icingaapi.prototype.setHostPerfdata = function (server, state, output, perfarr, callback) {
-    var self = this;
-    var resData = '';
-    var postBody = {
-        'type': 'host',
-        'exit_status': state,
-        'plugin_output': output,
-        'performance_data': perfarr
-    }
+    return wrappedCallback;
+  }
 
-    var options = {
-        hostname: self.url,
-        timeout: self.timeout,
-        port: self.port,
-        path: '/v1/actions/process-check-result?host=' + server,
-        method: 'POST',
-        rejectUnauthorized: false,
-        auth: self.user + ":" + self.pass,
-        headers: {
-            "Accept": "application/json",
-            "Content-Type": "application/json"
-        }
-    }
-    var req = https.request(options, function (res) {
-        res.on('data', function (chunk) {
-            resData += chunk;
-        })
-        res.on('end', function () {
-            if (res.statusCode == "200") {
-                var output = JSON.parse(resData);
-                return callback(null, output.results);
-            } else {
-                return callback({
-                    "Statuscode": res.statusCode,
-                    "StatusMessage": res.statusMessage
-                }, null);
-            }
-        })
-    });
-    req.end(JSON.stringify(postBody));
-}
-icingaapi.prototype.updateHostAttr = function (hostObj, host, callback) {
-    var self = this;
-
-    var options = {
-        hostname: self.url,
-        timeout: self.timeout,
-        port: self.port,
-        path: '/v1/objects/hosts/' + host,
-        rejectUnauthorized: false,
-        auth: self.user + ":" + self.pass,
-        method: 'POST',
-        headers: {
-            "Accept": "application/json",
-            "Content-Type": "application/json"
-        }
+  setServicePerfdata(service, server, state, output, perfarr, callback) {
+    const wrappedCallback = this.wrapAsPromise(callback);
+    let resData = '';
+    const postBody = {
+      exit_status: state,
+      plugin_output: output,
+      performance_data: perfarr,
     };
-    var req = https.request(options, (res) => {
-        res.on('data', (statusMessage) => {
-            if (res.statusCode == "200") {
-                return callback(null, "" + statusMessage);
-            } else {
-                return callback({
-                    "Statuscode": res.statusCode,
-                    "StatusMessage": res.statusMessage
-                }, null);
-            }
-        });
+
+    const options = {
+      ...this.options,
+      path: `/v1/actions/process-check-result?service=${server}!${service}`,
+      method: 'POST',
+      headers: {
+        Accept: 'application/json',
+        'Content-Type': 'application/json',
+      },
+    };
+
+    const req = https.request(options, (res) => {
+      res.on('data', (chunk) => {
+        resData += chunk;
+      });
+
+      res.on('end', () => {
+        let toReturn;
+
+        if (res.statusCode === '200') {
+          const outputCb = JSON.parse(resData);
+          toReturn = this.resolveCallback(wrappedCallback, outputCb.results);
+        } else {
+          toReturn = this.rejectCallback(wrappedCallback, {
+            Statuscode: res.statusCode,
+            StatusMessage: res.statusMessage,
+          });
+        }
+
+        return toReturn;
+      })
     });
+
+    req.end(JSON.stringify(postBody));
+
+    return wrappedCallback;
+  }
+
+  setHostPerfdata(server, state, output, perfarr, callback) {
+    const wrappedCallback = this.wrapAsPromise(callback);
+    let resData = '';
+    const postBody = {
+      type: 'host',
+      exit_status: state,
+      plugin_output: output,
+      performance_data: perfarr,
+    };
+
+    const options = {
+      ...this.options,
+      path: `/v1/actions/process-check-result?host=${server}`,
+      method: 'POST',
+      headers: {
+        Accept: 'application/json',
+        'Content-Type': 'application/json',
+      },
+    };
+
+    const req = https.request(options, (res) => {
+      res.on('data', (chunk) => {
+        resData += chunk;
+      });
+
+      res.on('end', () => {
+        let toReturn;
+
+        if (res.statusCode === '200') {
+          const outputCb = JSON.parse(resData);
+          toReturn = this.resolveCallback(wrappedCallback, outputCb.results);
+        } else {
+          toReturn = this.rejectCallback(wrappedCallback, {
+            Statuscode: res.statusCode,
+            StatusMessage: res.statusMessage,
+          });
+        }
+
+        return toReturn;
+      })
+    });
+    req.end(JSON.stringify(postBody));
+
+    return wrappedCallback;
+  }
+
+  updateHostAttr(hostObj, host, callback) {
+    const wrappedCallback = this.wrapAsPromise(callback);
+    const options = {
+      ...this.options,
+      path: `/v1/objects/hosts/${host}`,
+      method: 'POST',
+      headers: {
+        Accept: 'application/json',
+        'Content-Type': 'application/json',
+      },
+    };
+
+    const req = https.request(options, (res) => {
+      res.on('data', (statusMessage) => {
+        let toReturn;
+
+        if (res.statusCode === '200') {
+          toReturn = this.resolveCallback(wrappedCallback, `${statusMessage}`);
+        } else {
+          toReturn = this.rejectCallback(wrappedCallback, {
+            Statuscode: res.statusCode,
+            StatusMessage: res.statusMessage,
+          });
+        }
+
+        return toReturn;
+      });
+    });
+
     req.end(hostObj);
 
-    req.on('error', (e) => {
-        return callback(e, null);
-    });
-}
-icingaapi.prototype.updateServiceAttr = function (serviceObj, host, service, callback) {
-    var self = this;
+    req.on('error', e => this.rejectCallback(wrappedCallback, e));
 
-    var options = {
-        hostname: self.url,
-        timeout: self.timeout,
-        port: self.port,
-        path: '/v1/objects/services/' + host + "!" + service,
-        rejectUnauthorized: false,
-        auth: self.user + ":" + self.pass,
-        method: 'PUT',
-        headers: {
-            "Accept": "application/json",
-            "Content-Type": "application/json"
-        }
+    return wrappedCallback;
+  }
+
+  updateServiceAttr(serviceObj, host, service, callback) {
+    const wrappedCallback = this.wrapAsPromise(callback);
+    const options = {
+      ...this.options,
+      path: `/v1/objects/services/${host}!${service}`,
+      method: 'PUT',
+      headers: {
+        Accept: 'application/json',
+        'Content-Type': 'application/json',
+      },
     };
-    var req = https.request(options, (res) => {
-        res.on('data', (successMesage) => {
-            if (res.statusCode == "200") {
-                return callback(null, "" + successMesage);
-            } else {
-                return callback({
-                    "Statuscode": res.statusCode,
-                    "StatusMessage": res.statusMessage
-                }, null);
-            }
-        });
+
+    const req = https.request(options, (res) => {
+      res.on('data', (successMesage) => {
+        let toReturn;
+
+        if (res.statusCode === '200') {
+          toReturn = this.resolveCallback(wrappedCallback, `${successMesage}`);
+        } else {
+          toReturn = this.rejectCallback(wrappedCallback, {
+            Statuscode: res.statusCode,
+            StatusMessage: res.statusMessage,
+          });
+        }
+
+        return toReturn;
+      });
     });
+
     req.end(serviceObj);
 
-    req.on('error', (e) => {
-        return callback(e, null);
+    req.on('error', e => this.rejectCallback(wrappedCallback, e));
+
+    return wrappedCallback;
+  }
+
+  getServiceTemplates(callback) {
+    const wrappedCallback = this.wrapAsPromise(callback);
+    const options = {
+      ...this.options,
+      path: '/v1/templates/services',
+      method: 'GET',
+    };
+
+    const req = https.request(options, (res) => {
+      res.on('data', (d) => {
+        let toReturn;
+
+        if (res.statusCode === '200') {
+          toReturn = this.resolveCallback(wrappedCallback, `${d}`);
+        } else {
+          toReturn = this.rejectCallback(wrappedCallback, {
+            Statuscode: res.statusCode,
+            StatusMessage: res.statusMessage,
+          });
+        }
+
+        return toReturn;
+      });
     });
-}
-icingaapi.prototype.getServiceTemplates = function (callback) {
-    var self = this;
 
-    var options = {
-        hostname: self.url,
-        timeout: self.timeout,
-        port: self.port,
-        path: '/v1/templates/services',
-        method: 'GET',
-        rejectUnauthorized: false,
-        auth: self.user + ":" + self.pass,
-    }
-
-    var req = https.request(options, (res) => {
-        res.on('data', (d) => {
-            if (res.statusCode == "200") {
-                return callback(null, "" + d);
-            } else {
-                return callback({
-                    "Statuscode": res.statusCode,
-                    "StatusMessage": res.statusMessage
-                }, null);
-            }
-
-        });
-    });
     req.end();
 
-    req.on('error', (e) => {
-        return callback(e, null);
+    req.on('error', e => this.rejectCallback(wrappedCallback, e));
+
+    return wrappedCallback;
+  }
+
+  checkExistServiceTemplate(name, callback) {
+    const wrappedCallback = this.wrapAsPromise(callback);
+    const options = {
+      ...this.options,
+      path: `/v1/templates/services/${name}`,
+      method: 'GET',
+    };
+
+    const req = https.request(options, (res) => {
+      res.on('data', (d) => {
+        let toReturn;
+
+        if (res.statusCode === '200') {
+          toReturn = this.resolveCallback(wrappedCallback, `${d}`);
+        } else {
+          toReturn = this.rejectCallback(wrappedCallback, {
+            Statuscode: res.statusCode,
+            StatusMessage: res.statusMessage,
+          });
+        }
+
+        return toReturn;
+      });
     });
-}
-icingaapi.prototype.checkExistServiceTemplate = function (name, callback) {
-    var self = this;
 
-    var options = {
-        hostname: self.url,
-        timeout: self.timeout,
-        port: self.port,
-        path: '/v1/templates/services/' + name,
-        method: 'GET',
-        rejectUnauthorized: false,
-        auth: self.user + ":" + self.pass,
-    }
-
-    var req = https.request(options, (res) => {
-        res.on('data', (d) => {
-            if (res.statusCode == "200") {
-                return callback(null, "" + d);
-            } else {
-                return callback({
-                    "Statuscode": res.statusCode,
-                    "StatusMessage": res.statusMessage
-                }, null);
-            }
-
-        });
-    });
     req.end();
 
-    req.on('error', (e) => {
-        return callback(e, null);
+    req.on('error', e => this.rejectCallback(wrappedCallback, e));
+
+    return wrappedCallback;
+  }
+
+  getHostTemplates(callback) {
+    const wrappedCallback = this.wrapAsPromise(callback);
+    const options = {
+      ...this.options,
+      path: '/v1/templates/hosts',
+      method: 'GET',
+    };
+
+    const req = https.request(options, (res) => {
+      res.on('data', (d) => {
+        let toReturn;
+
+        if (res.statusCode === '200') {
+          toReturn = this.resolveCallback(wrappedCallback, `${d}`);
+        } else {
+          toReturn = this.rejectCallback(wrappedCallback, {
+            Statuscode: res.statusCode,
+            StatusMessage: res.statusMessage,
+          });
+        }
+
+        return toReturn;
+      });
     });
-}
-icingaapi.prototype.getHostTemplates = function (callback) {
-    var self = this;
 
-    var options = {
-        hostname: self.url,
-        timeout: self.timeout,
-        port: self.port,
-        path: '/v1/templates/hosts',
-        method: 'GET',
-        rejectUnauthorized: false,
-        auth: self.user + ":" + self.pass,
-    }
-
-    var req = https.request(options, (res) => {
-        res.on('data', (d) => {
-            if (res.statusCode == "200") {
-                return callback(null, "" + d);
-            } else {
-                return callback({
-                    "Statuscode": res.statusCode,
-                    "StatusMessage": res.statusMessage
-                }, null);
-            }
-
-        });
-    });
     req.end();
 
-    req.on('error', (e) => {
-        return callback(e, null);
+    req.on('error', e => this.rejectCallback(wrappedCallback, e));
+
+    return wrappedCallback;
+  }
+
+  checkExistHostTemplate(name, callback) {
+    const wrappedCallback = this.wrapAsPromise(callback);
+    const options = {
+      ...this.options,
+      path: `/v1/templates/hosts/${name}`,
+      method: 'GET',
+    };
+
+    const req = https.request(options, (res) => {
+      res.on('data', (d) => {
+        let toReturn;
+
+        if (res.statusCode === '200') {
+          toReturn = this.resolveCallback(wrappedCallback, `${d}`);
+        } else {
+          toReturn = wrappedCallback({
+            Statuscode: res.statusCode,
+            StatusMessage: res.statusMessage,
+          }, null);
+        }
+
+        return toReturn;
+      });
     });
-}
-icingaapi.prototype.checkExistHostTemplate = function (name, callback) {
-    var self = this;
 
-    var options = {
-        hostname: self.url,
-        timeout: self.timeout,
-        port: self.port,
-        path: '/v1/templates/hosts/' + name,
-        method: 'GET',
-        rejectUnauthorized: false,
-        auth: self.user + ":" + self.pass,
-    }
-
-    var req = https.request(options, (res) => {
-        res.on('data', (d) => {
-            if (res.statusCode == "200") {
-                return callback(null, "" + d);
-            } else {
-                return callback({
-                    "Statuscode": res.statusCode,
-                    "StatusMessage": res.statusMessage
-                }, null);
-            }
-
-        });
-    });
     req.end();
 
-    req.on('error', (e) => {
-        return callback(e, null);
-    });
+    req.on('error', e => this.rejectCallback(wrappedCallback, e));
+
+    return wrappedCallback;
+  }
 }
 
-module.exports = icingaapi;
+module.exports = Icinga;
